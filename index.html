@@ -125,6 +125,13 @@
     transition: all .2s; text-decoration: none; display: inline-block;
   }
   .btn-outline:hover { border-color: rgba(255,255,255,0.5); transform: translateY(-1px); }
+  .btn-start {
+    background: var(--purple); color: var(--white);
+    border: none; border-radius: 8px; padding: 14px 32px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: all .2s; text-decoration: none; display: inline-block;
+  }
+  .btn-start:hover { background: var(--purple-bright); transform: translateY(-1px); }
 
   /* STATS */
   .stats-bar {
@@ -267,6 +274,7 @@
   <h1>광고 데이터가<br><em>자동으로 모입니다</em></h1>
   <p class="hero-sub">매체별로 흩어진 광고 성과 데이터를 하나의 플랫폼에서 자동 수집하고, 팀 전체가 같은 숫자를 봅니다.</p>
   <div class="hero-actions">
+    <a href="app.html" class="btn-start">지금 시작하기 →</a>
     <a href="#contact" class="btn-primary">도입 문의하기</a>
     <a href="#features" class="btn-outline">기능 살펴보기</a>
   </div>
