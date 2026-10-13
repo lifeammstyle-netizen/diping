@@ -484,12 +484,32 @@ th:hover .col-sort-btn, .col-sort-btn.active { opacity: 1; }
    이 게이트가 쥐고 있는 형태라, 로그인 이후의 모든 동작은 원본 그대로다. */
 .diping-login-screen {
   position: fixed; inset: 0; z-index: 1000;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 36px;
   background:
     radial-gradient(circle at 15% 20%, rgba(155,77,219,.35), transparent 45%),
     radial-gradient(circle at 85% 80%, rgba(123,47,190,.30), transparent 45%),
     var(--navy);
   padding: 20px;
+  overflow-y: auto; /* 히어로+카드를 세로로 쌓으니 좁은 화면에서 넘칠 수 있어 스크롤 허용(2026-10-13) */
+}
+/* 로그인 게이트 히어로 섹션(2026-10-13 신규) — 배경이 항상 고정 --navy라 라이트/다크 테마와
+   무관하게 밝은 글자색을 직접 써야 함(var(--text)는 라이트 모드에서 어두운 색이라 이 배경 위에서
+   안 보임 — 사이드바 .diping-wordmark가 이미 같은 이유로 #fff를 직접 쓰는 것과 동일한 이유). */
+.diping-login-hero { max-width: 560px; text-align: center; }
+.diping-login-hero-title { font-size: 34px; font-weight: 800; line-height: 1.3; letter-spacing: -.01em; color: #fff; margin: 0 0 14px; }
+.diping-login-hero-sub { font-size: 14.5px; line-height: 1.6; color: rgba(255,255,255,.72); margin: 0 0 26px; }
+.diping-login-hero-actions { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.diping-hero-btn {
+  font-family: var(--font-sans); cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 600;
+  padding: 14px 32px; border: 1.5px solid transparent; white-space: nowrap; transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.diping-hero-btn-primary { background: var(--accent); color: #fff; }
+.diping-hero-btn-primary:hover { background: #6a27a6; }
+.diping-hero-btn-ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.32); }
+.diping-hero-btn-ghost:hover { border-color: var(--accent2); color: var(--accent2); }
+@media (max-width: 480px) {
+  .diping-login-hero-title { font-size: 25px; }
+  .diping-hero-btn { padding: 12px 20px; font-size: 14.5px; }
 }
 .diping-login-card {
   width: 100%; max-width: 380px;
@@ -683,6 +703,15 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
        숨겨져 있다가(body에 .app-hidden, 아래 참고) 로그인 성공 시 startDipingApp_()가
        걷어내고 원본 부트스트랩을 시작한다. -->
   <div class="diping-login-screen" id="dipingLoginScreen">
+    <div class="diping-login-hero">
+      <h1 class="diping-login-hero-title">광고 데이터가<br>자동으로 모입니다</h1>
+      <p class="diping-login-hero-sub">네이버·구글·카카오·메타 등 8개 매체의 광고 데이터를 매일 자동으로 모아 한 화면에서 보여드립니다.</p>
+      <div class="diping-login-hero-actions">
+        <button type="button" class="diping-hero-btn diping-hero-btn-primary" id="heroStartBtn">지금 시작하기 →</button>
+        <button type="button" class="diping-hero-btn diping-hero-btn-ghost" id="heroContactBtn">도입 문의하기</button>
+        <button type="button" class="diping-hero-btn diping-hero-btn-ghost" id="heroFeaturesBtn">기능 살펴보기</button>
+      </div>
+    </div>
     <div class="diping-login-card">
       <div class="diping-login-logo">di<span>ping</span></div>
       <p class="diping-login-sub">광고 리포트를 한 곳에서 — 로그인해서 계속하기</p>
@@ -771,6 +800,28 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
         document.getElementById('dipingLoginEmail').value = btn.dataset.demo;
         document.getElementById('dipingLoginPw').value = '1234';
       });
+    });
+
+    // 히어로 섹션 버튼 3개(2026-10-13 신규) — 이 화면 자체가 이미 로그인 화면 전부라 별도
+    // "로그인 섹션"으로 이동할 곳이 없음. "지금 시작하기"는 그 취지를 살려 로그인 폼으로
+    // 스크롤+포커스하는 것으로 대체. showToast()는 이 스크립트보다 아래(파일 끝)의 큰 원본
+    // <script>에서 정의되지만, 실제 클릭은 페이지 전체가 로드된 한참 뒤에나 일어나므로
+    // 함수 선언 호이스팅 덕분에 문제없이 호출 가능(dipingLoginSucceed_()가 startDipingApp_()을
+    // 참조하는 것과 동일한 패턴).
+    document.getElementById('heroStartBtn').addEventListener('click', function() {
+      var card = document.querySelector('.diping-login-card');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      var emailInput = document.getElementById('dipingLoginEmail');
+      if (emailInput) emailInput.focus();
+    });
+    document.getElementById('heroContactBtn').addEventListener('click', function() {
+      if (typeof showToast === 'function') {
+        showToast('도입 문의는 아직 준비 중이에요. contact@diping.io로 문의해주세요.', 'success');
+      }
+    });
+    document.getElementById('heroFeaturesBtn').addEventListener('click', function() {
+      var demo = document.querySelector('.diping-demo-accounts');
+      if (demo) demo.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
     // 새로고침해도 로그인 유지(데모 편의) — 실제 운영 전환 시 이 블록은 서버 세션 체크로 대체
