@@ -728,9 +728,24 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
 
     var DIPING_ROLE_LABEL = { master: '마스터', ae: 'AE', advertiser: '광고주' };
 
-    function dipingLoginSucceed_(email) {
-      DIPING_SESSION = Object.assign({ email: email }, DIPING_DEMO_USERS[email]);
-      try { localStorage.setItem('diping_demo_session', email); } catch (e) {}
+    // ⚠️ 2026-10-14: 실제 백엔드(EC2 FastAPI, /api -> nginx가 8000번으로 프록시) 연동 추가.
+    // realSession이 주어지면 그 값으로 세션을 구성(실제 로그인), 없으면 기존처럼
+    // DIPING_DEMO_USERS에서 채운다(데모 로그인) — 두 경로가 공존한다.
+    // realSession 형태: { token, role, name } — token은 JWT, role은 백엔드에 역할 개념이
+    // 아직 없어 'master'로 고정(가장 UI를 덜 가리는 값 — 자세한 사유는 CLAUDE.md 참고).
+    function dipingLoginSucceed_(email, realSession) {
+      DIPING_SESSION = realSession
+        ? Object.assign({ email: email, authMode: 'real' }, realSession)
+        : Object.assign({ email: email, authMode: 'demo' }, DIPING_DEMO_USERS[email]);
+      try {
+        if (DIPING_SESSION.authMode === 'real') {
+          localStorage.setItem('diping_real_token', DIPING_SESSION.token);
+          localStorage.removeItem('diping_demo_session');
+        } else {
+          localStorage.setItem('diping_demo_session', email);
+          localStorage.removeItem('diping_real_token');
+        }
+      } catch (e) {}
       document.getElementById('dipingLoginScreen').classList.add('hidden');
       document.body.classList.add('diping-authed');
       var line = document.getElementById('dipingSessionLine');
@@ -742,6 +757,7 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
       DIPING_SESSION = null;
       try {
         localStorage.removeItem('diping_demo_session');
+        localStorage.removeItem('diping_real_token');
         // 한 브라우저에서 여러 계정을 번갈아 로그인하는 데모 환경 특성상, 원본의
         // localStorage.lastTab(계정 구분 없이 전역 저장, switchSection() 참고)이
         // 그대로 있으면 새 계정이 직전 계정이 보던 탭으로 복원돼 버린다 — 로그아웃
@@ -751,18 +767,53 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
       location.reload();
     }
 
-    document.getElementById('dipingLoginForm').addEventListener('submit', function(e) {
+    // 실제 백엔드 호출 공용 헬퍼 — Authorization 헤더 자동 첨부 + 401(토큰 없음/만료)
+    // 이면 자동 로그아웃 후 로그인 화면으로 돌아간다("토큰 없으면 401 에러 → 로그인
+    // 화면으로 이동" 요구사항을 모든 실제 API 호출에 공통 적용).
+    function dipingApiFetch_(path, options) {
+      options = options || {};
+      var headers = Object.assign({}, options.headers || {});
+      if (DIPING_SESSION && DIPING_SESSION.token) headers['Authorization'] = 'Bearer ' + DIPING_SESSION.token;
+      return fetch('/api' + path, Object.assign({}, options, { headers: headers })).then(function(res) {
+        if (res.status === 401) {
+          dipingLogout_();
+          throw new Error('인증이 만료되어 로그인 화면으로 돌아갑니다');
+        }
+        if (!res.ok) throw new Error('API 오류: HTTP ' + res.status);
+        return res.json();
+      });
+    }
+
+    document.getElementById('dipingLoginForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       var email = document.getElementById('dipingLoginEmail').value.trim();
       var pw    = document.getElementById('dipingLoginPw').value;
-      var u     = DIPING_DEMO_USERS[email];
       var errBox = document.getElementById('dipingLoginError');
+      errBox.classList.remove('show');
+
+      // 1순위: 실제 백엔드(/api/auth/login) 시도 — 성공하면 JWT 세션으로 진입.
+      try {
+        var res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, password: pw }),
+        });
+        if (res.ok) {
+          var data = await res.json();
+          dipingLoginSucceed_(email, { token: data.access_token, role: 'master', name: email });
+          return;
+        }
+      } catch (networkErr) {
+        // 백엔드 자체가 응답 안 함(서버 다운 등) — 아래 데모 계정 폴백으로 넘어감.
+      }
+
+      // 2순위: 데모 계정(실제 백엔드에 없는 이메일이거나, 백엔드가 그 이메일/비번을 거부한 경우)
+      var u = DIPING_DEMO_USERS[email];
       if (!u || u.password !== pw) {
         errBox.textContent = '이메일 또는 비밀번호가 올바르지 않습니다.';
         errBox.classList.add('show');
         return;
       }
-      errBox.classList.remove('show');
       dipingLoginSucceed_(email);
     });
 
@@ -773,11 +824,35 @@ body:not(.diping-authed) #testModeBanner { display: none !important; }
       });
     });
 
-    // 새로고침해도 로그인 유지(데모 편의) — 실제 운영 전환 시 이 블록은 서버 세션 체크로 대체
+    // 새로고침해도 로그인 유지. 실제 토큰(diping_real_token)이 있으면 먼저 그걸로
+    // /api/clients를 1번 호출해 "아직 유효한지" 확인 후 복원하고(무효/만료면 조용히
+    // 지우고 로그인 화면 그대로 — 토큰 없음과 동일하게 처리), 없으면 기존 데모 세션
+    // 복원 경로로 폴백한다.
     (function restoreDipingSession_() {
-      var saved = null;
-      try { saved = localStorage.getItem('diping_demo_session'); } catch (e) {}
-      if (saved && DIPING_DEMO_USERS[saved]) dipingLoginSucceed_(saved);
+      var realToken = null, demoEmail = null;
+      try {
+        realToken = localStorage.getItem('diping_real_token');
+        demoEmail = localStorage.getItem('diping_demo_session');
+      } catch (e) {}
+
+      if (realToken) {
+        fetch('/api/clients', { headers: { 'Authorization': 'Bearer ' + realToken } })
+          .then(function(res) {
+            if (!res.ok) throw new Error('토큰 만료/무효');
+            // 이메일은 토큰에 없어 표시용으로만 JWT payload에서 디코드한다(서명 검증은
+            // 이미 서버가 한 뒤이므로 여기선 신뢰하고 꺼내 쓰기만 함 — 위조돼 있어도
+            // 어차피 실제 API 호출은 서버가 서명으로 다시 검증해 401로 걸러낸다).
+            var email = '';
+            try { email = JSON.parse(atob(realToken.split('.')[1])).email || ''; } catch (e2) {}
+            dipingLoginSucceed_(email, { token: realToken, role: 'master', name: email });
+          })
+          .catch(function() {
+            try { localStorage.removeItem('diping_real_token'); } catch (e) {}
+            // 로그인 화면이 기본 표시 상태라 별도 처리 불필요 — "토큰 무효 -> 로그인 화면" 요건 충족.
+          });
+      } else if (demoEmail && DIPING_DEMO_USERS[demoEmail]) {
+        dipingLoginSucceed_(demoEmail);
+      }
     })();
   </script>
 
@@ -2701,7 +2776,21 @@ var MOCK_HANDLERS = {
   getUserInfoByEmail: function(email) { return { role: 'unknown' }; }, // 이메일 모달 자체를 로그인 게이트가 대체 — 사용 안 함
   isAdminUser: function() { return !!(DIPING_SESSION && DIPING_SESSION.role === 'master'); },
 
-  getClientsForUI: function() { return _dipingVisibleClients_(); },
+  // 2026-10-14: 실제 로그인 세션(authMode==='real')이면 FastAPI 백엔드의 실제
+  // 광고주 목록(GET /clients)을 쓴다 — 데모 로그인은 기존 그대로 MOCK_CLIENTS.
+  // ⚠️ 실제 DB의 clients 테이블엔 collect(수집여부)/ae(담당자)/role별 접근범위
+  // 개념 자체가 없어서(아직 이 수준까지 포팅 안 됨), 역할별 필터링(_dipingVisibleClients_
+  // 의 master/ae/advertiser 분기)은 실 데이터 경로엔 적용되지 않는다 — 실 로그인
+  // 사용자는 항상 DB에 등록된 광고주 전체를 본다. collect는 항상 true로 간주(UI가
+  // "(수집중지)" 배지를 못 그리게 하지 않기 위한 값일 뿐, 실제 수집 상태 아님).
+  getClientsForUI: function() {
+    if (DIPING_SESSION && DIPING_SESSION.authMode === 'real') {
+      return dipingApiFetch_('/clients').then(function(list) {
+        return (list || []).map(function(c) { return { name: c.name, collect: true }; });
+      });
+    }
+    return _dipingVisibleClients_();
+  },
   getAllClientsStatus: function() {
     var states = ['success', 'success', 'success', 'warning', 'never', 'success'];
     return _dipingVisibleClients_().map(function(c, i) {
